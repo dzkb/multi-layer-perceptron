@@ -1,7 +1,8 @@
 import numpy as np
 from scipy.ndimage.interpolation import map_coordinates
 from scipy.ndimage.filters import gaussian_filter
-from skimage import io
+import scipy.misc
+from PIL import Image
 import os
 
 
@@ -12,6 +13,7 @@ def elastic_transform(image, alpha, sigma, random_state=None):
        Proc. of the International Conference on Document Analysis and
        Recognition, 2003.
     """
+    print(len(image.shape))
     assert len(image.shape) == 2
 
     if random_state is None:
@@ -33,11 +35,11 @@ def load_training_set(data_dir="training_set", output_dir="augmented_set"):
         for filename in files:
             label = filename[0]  # first characters indicates label
             file_path = data_dir + "\\" + filename
-            image = io.imread(file_path)
+            image = np.array(Image.open(file_path).getdata())
             image = elastic_transform(image, 34, 4)
             output_filename = label + "_0_0.png"
             try:
-                io.imsave(output_dir + "\\" + output_filename, image)
+                scipy.misc.imsave(output_dir + "\\" + output_filename, image)
             except:
                 print(filename)
 

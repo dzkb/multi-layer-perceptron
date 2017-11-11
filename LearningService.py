@@ -11,7 +11,7 @@ class LearningService(Thread):
                  training_set: List[Tuple[Tuple[float], Tuple[float]]],
                  validation_set: List[Tuple[Tuple[float], Tuple[float]]],
                  learning_rate: float,
-                 has_momentum: bool,
+                 momentum_rate: float,
                  epoch_count=-1):
         Thread.__init__(self)
         self.messages_out = producer_queue
@@ -20,23 +20,32 @@ class LearningService(Thread):
         self.training_set = training_set
         self.validation_set = validation_set
         self.learning_rate = learning_rate
-        self.has_momentum = has_momentum
+        self.momentum_rate = momentum_rate
         self.max_epochs = epoch_count
         self.epoch_count = 0
+        self.hidden_momentum = [[0] * len(self.net.weights_hidden[0])] * len(self.net.weights_hidden)
+        self.output_momentum = [[0] * len(self.net.weights_output[0])] * len(self.net.weights_output)
 
     def run(self):
         if self.max_epochs is not -1:
-            errors = []
+            training_errors = []
+            validation_errors = []
             for i in range(self.max_epochs):
                 if self.messages_in.empty():
-                    mse = self.epoch_step()
+                    mse_training = self.epoch_step()
                     print("epoch: {}".format(i))
-                    print(mse)
-                    errors.append(mse)
-                    print(self.validate())
-            print(errors)
+                    print(mse_training)
+                    training_errors.append(mse_training)
+                    mse_validation = self.validate()[0]
+                    validation_errors.append(mse_validation)
+                    print(mse_validation)
+                else:
+                    break
+            print(training_errors)
+            print(validation_errors)
+            self.messages_out.put((training_errors, validation_errors))
         else:
-            pass
+            pass  # Early stopping
 
     def epoch_step(self):
         shuffle(self.training_set)
@@ -79,12 +88,16 @@ class LearningService(Thread):
             # 2.3 - Update output weights
             for k in range(len(self.net.weights_output)):
                 for j in range(len(self.net.weights_output[k])):
-                    self.net.weights_output[k][j] += self.learning_rate * δ_outputs[k] * hidden_layer[j]
+                    self.net.weights_output[k][j] += self.learning_rate * δ_outputs[k] * hidden_layer[j] + \
+                                                     self.momentum_rate * self.output_momentum[k][j]  # Momentum term
+                    self.output_momentum[k][j] = self.learning_rate * δ_outputs[k] * hidden_layer[j]
 
             # 2.4 - Update hidden weights
             for j in range(len(self.net.weights_hidden)):
                 for i in range(len(self.net.weights_hidden[j])):
-                    self.net.weights_hidden[j][i] += self.learning_rate * δ_hiddens[j] * biased_sample_input[i]
+                    self.net.weights_hidden[j][i] += self.learning_rate * δ_hiddens[j] * biased_sample_input[i] + \
+                                                     self.momentum_rate * self.hidden_momentum[j][i]
+                    self.hidden_momentum[j][i] = self.learning_rate * δ_hiddens[j] * biased_sample_input[i]
 
             # 3 - Error calculation
             # 3.1 - Calculate output

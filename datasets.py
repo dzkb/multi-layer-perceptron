@@ -11,7 +11,7 @@ def to_categorical(value):
 
 
 def binarize(image):
-    return tuple(0 if x < 0.6 else 1 for x in iter(image))
+    return tuple(1 - (x/255) for x in iter(image))
 
 
 def load_single_test(filename):
@@ -19,6 +19,21 @@ def load_single_test(filename):
         image = Image.open(file)
         image = binarize(image)
         return image
+
+
+def load_test_set(data_dir):
+    dataset = []
+    for root, dirs, files in os.walk(data_dir):
+        for filename in files:
+            label = filename[0]  # first characters indicates label
+            with open(data_dir + "\\" + filename, "rb") as file:
+                image = Image.open(file)
+                print(filename, list(image.getdata()))
+                image = image.convert("L")
+                image = binarize(image.getdata())
+                data_record = (image, label, filename)
+                dataset.append(data_record)
+    return dataset
 
 
 def load_training_set(data_dir):
