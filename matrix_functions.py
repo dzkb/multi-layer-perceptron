@@ -7,6 +7,7 @@ class Sigmoid(BaseFunction):
         self.b = b
 
     def __call__(self, x):
+        x = np.clip(x, -100, 100)
         return 1.0 / (1.0 + np.exp(self.b * x))
 
     def derivative(self, x):

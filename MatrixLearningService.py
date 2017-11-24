@@ -2,17 +2,21 @@ from threading import Thread
 import numpy as np
 import MatrixNet
 import queue
+import random
+import time
 from typing import *
 
 
 class MatrixLearningService(Thread):
     def __init__(self, net: MatrixNet,producer_queue: queue.Queue,
                  consumer_queue: queue.Queue,
-                 training_set: List[Tuple[Tuple[float], Tuple[float]]],
-                 validation_set: List[Tuple[Tuple[float], Tuple[float]]],
+                 training_set,
+                 validation_set,
                  learning_rate: float,
                  momentum_rate: float,
-                 epoch_count=-1):
+                 epoch_count=-1,
+                 l2_λ=0,
+                 dropout_chance=0):
         Thread.__init__(self)
         self.messages_out = producer_queue
         self.messages_in = consumer_queue
@@ -23,106 +27,100 @@ class MatrixLearningService(Thread):
         self.momentum_rate = momentum_rate
         self.max_epochs = epoch_count
         self.epoch_count = 0
-        self.hidden_momentum = np.zeros(self.net.weights_hidden.shape[0], self.net.weights_hidden.shape[1])
-        self.output_momentum = np.zeros(self.net.weights_output.shape[0], self.net.weights_output.shape[1])
-        # self.hidden_momentum = [[0] * len(self.net.weights_hidden[0])] * len(self.net.weights_hidden)
-        # self.output_momentum = [[0] * len(self.net.weights_output[0])] * len(self.net.weights_output)
-
-
+        # some momentum-related stuff here
+        # regularization paramters
+        self.l2_λ = l2_λ
+        self.dropout_chance = dropout_chance
 
     def run(self):
         if self.max_epochs is not -1:
-            training_errors = []
-            validation_errors = []
             for i in range(self.max_epochs):
                 if self.messages_in.empty():
+                    print("epoch", self.epoch_count)
+                    start = time.time()
                     mse_training = self.epoch_step()
-                    print("epoch: {}".format(i))
-                    print(mse_training)
-                    training_errors.append(mse_training)
-                    mse_validation = self.validate()[0]
-                    validation_errors.append(mse_validation)
-                    print(mse_validation)
+                    print(time.time() - start)
                 else:
                     break
-            print(training_errors)
-            print(validation_errors)
-            self.messages_out.put((training_errors, validation_errors))
-        else:
-            pass  # Early stopping
+
+            self.error(self.validation_set)
+
 
     def epoch_step(self):
-        shuffle(self.training_set)
+        random.shuffle(self.training_set)
         errors = []
         correct_predictions = 0
-        for sample in self.training_set:
+
+        for p in range(len(self.training_set)):
+            print("Sample {}/{}".format(p, len(self.training_set)))
+            sample = self.training_set[p]
+        # for sample in self.training_set:
+
             sample_input = sample[0]
-            biased_sample_input = sample_input + (1,)
             sample_label = sample[1]
 
-            # 1 - Feed forward
-            # 1.1 - Calculate net in hidden layer
-            net_hidden = self.net.net_hidden(sample_input)
+            Δw = [np.zeros(layer_weights.shape) for layer_weights in self.net.weights]
+            Δb = [np.zeros(layer_biases.shape) for layer_biases in self.net.biases]
 
-            # 1.2 - Calculate hidden layer output
-            hidden_layer = [self.net.activation_f(net_j) for net_j in net_hidden] + [1]  # bias
+            # 1 Feed-forward
 
-            # 1.3 - Calculate net in output layer
-            net_output = self.net.net_output(hidden_layer)
+            output = sample_input
+            layers_outputs = []
+            layers_nets = []
+            layers_outputs.append(output)
 
-            # 1.4 - Calculate output layer
-            output = [self.net.activation_f(output_k) for output_k in net_output]
+            # 1.1 Calculate nets and activations for each layer without the last
 
-            # 2 - Backpropagation
-            # 2.1 - Calculate output error (output delta)
-            δ_outputs = []
-            for k in range(len(self.net.weights_output)):
-                δ_pk = sample_label[k] - output[k]
-                δ_outputs.append(δ_pk * self.net.activation_f.derivative(net_output[k]))
-            # print(δ_outputs)
+            for w, b in zip(self.net.weights[:-1], self.net.biases[:-1]):
+                net = np.dot(w, output) + b
+                if self.dropout_chance > 0:
+                    net *= np.random.binomial(1, self.dropout_chance, size=net.shape) / self.dropout_chance
+                output = self.net.activation_f(net)
+                layers_nets.append(net)
+                layers_outputs.append(output)
 
-            # 2.2 - Calculate hidden layer error (hidden delta)
-            δ_hiddens = []
-            for j in range(len(self.net.weights_hidden)):
-                weights_output_j = [weights_output[j] for weights_output in self.net.weights_output]
-                δ_pj = sum(δ_pk * w_kj for (δ_pk, w_kj) in zip(δ_outputs, weights_output_j))
-                δ_pj = δ_pj * self.net.activation_f.derivative(net_hidden[j])
-                δ_hiddens.append(δ_pj)
+            # 1.2 Calculate output layer
 
-            # 2.3 - Update output weights
-            for k in range(len(self.net.weights_output)):
-                for j in range(len(self.net.weights_output[k])):
-                    self.net.weights_output[k][j] += self.learning_rate * δ_outputs[k] * hidden_layer[j] + \
-                                                     self.momentum_rate * self.output_momentum[k][j]  # Momentum term
-                    self.output_momentum[k][j] = self.learning_rate * δ_outputs[k] * hidden_layer[j]
+            net = np.dot(self.net.weights[-1], output) + self.net.biases[-1]
+            output = self.net.output_activation_f(net)
+            layers_nets.append(net)
+            layers_outputs.append(output)
 
-            # 2.4 - Update hidden weights
-            for j in range(len(self.net.weights_hidden)):
-                for i in range(len(self.net.weights_hidden[j])):
-                    self.net.weights_hidden[j][i] += self.learning_rate * δ_hiddens[j] * biased_sample_input[i] + \
-                                                     self.momentum_rate * self.hidden_momentum[j][i]
-                    self.hidden_momentum[j][i] = self.learning_rate * δ_hiddens[j] * biased_sample_input[i]
+            # 2 Backpropagation
+            # 2.1 Calculate errors
+            # 2.1.1 Output layer
+            # δ is the derivative of the cost function
+            # δ =(Y - Y ̂)⨀f'(net)
+            δ_w = (layers_outputs[-1] - sample_label) * self.net.output_activation_f.derivative(layers_nets[-1])
+            Δb[-1] = δ_w
+            Δw[-1] = np.dot(δ_w, layers_outputs[-2].transpose())
 
-            # 3 - Error calculation
-            # 3.1 - Calculate output
-            output = self.net.predict(sample_input)
-            # print(sample_label, output)
-            if output.index(max(output)) == sample_label.index(max(sample_label)):
-                correct_predictions += 1
+            # 2.1.2 Hidden layers
+            for layer in range(2, self.net.num_layers):
+                δ_w = np.dot(self.net.weights[-layer+1].transpose(), δ_w) \
+                      * self.net.output_activation_f.derivative(layers_nets[-layer])
+                Δb[-layer] = δ_w
+                Δw[-layer] = np.dot(δ_w, layers_outputs[-layer - 1].transpose())
 
-            e_p = 1/2 * sum((label - neuron_output) ** 2 for (label, neuron_output) in zip(sample_label, output))
-            errors.append(e_p)
-        return sum(errors) / len(errors)
+            # 2.2 Update weights
+
+            self.net.weights = [((1 - self.l2_λ) * w - (self.learning_rate * δ_w)) for (w, δ_w) in zip(self.net.weights, Δw)]
+            self.net.biases = [b - (self.learning_rate * δ_b) for (b, δ_b) in zip(self.net.biases, Δb)]
+
+        self.epoch_count += 1
+        return self.error(self.training_set)
+
+    def error(self, test_set):
+        inputs = np.hstack((input[0] for input in test_set))
+        labels = np.hstack((input[1] for input in test_set))
+        predictions = self.net.predict(inputs)
+        print(np.sum((predictions - labels) ** 2).reshape(1)/len(test_set))
+
 
     def validate(self):
-        error = 0
-        correct_predictions = 0
-        for sample in self.validation_set:
-            sample_input = sample[0]
-            sample_labels = sample[1]
-            outputs = self.net.predict(sample_input)
-            e_p = 1 / 2 * sum((label - neuron_output) ** 2 for (label, neuron_output) in zip(sample_labels, outputs))
-            error += e_p
-            correct_predictions += 1 if outputs.index(max(outputs)) == sample_labels.index(max(sample_labels)) else 0
-        error = error/len(self.validation_set)
-        return error, correct_predictions, len(self.validation_set)
+        pass
+
+    def dump_shapes(self):
+        print("-" * 10)
+        for w, b in zip(self.net.weights, self.net.biases):
+            print(w.shape, b.shape)

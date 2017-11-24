@@ -3,32 +3,28 @@ import random
 
 
 class MatrixNet():
-    def __init__(self, activation_function, neuron_count=100):
-        self.neuron_count = neuron_count
+    def __init__(self, activation_function, output_activation):
+        self.layer_sizes = None
+        self.num_layers = None
+        self.layers = None
+        self.biases = None
+        self.weights = None
         self.activation_f = activation_function
-        self.output_activation_f = None
-        self.weights_hidden = None
-        self.weights_output = None
+        self.output_activation_f = output_activation
 
-    def initialize_weights(self, n_inputs, n_outputs, threshold=1):
-        n_biased_inputs = n_inputs + 1
-        n_biased_hiddens = self.neuron_count + 1
-
-        self.weights_hidden = np.zeros((self.neuron_count, n_biased_inputs))
-        self.weights_output = np.zeros((n_outputs, n_biased_hiddens))
-
-        for i in range(self.neuron_count):
-            for j in range(n_biased_inputs):
-                self.weights_hidden[i][j] = random.uniform(-threshold, threshold)
-            # neuron_weights = [random.uniform(-threshold, threshold) for _ in range(n_biased_inputs)]
-            # self.weights_hidden.append(neuron_weights)
-
-        for i in range(n_outputs):
-            for j in range(n_biased_hiddens):
-                self.weights_output[i][j] = random.uniform(-threshold, threshold)
-            # neuron_weights = [random.uniform(-threshold, threshold) for _ in range(n_biased_hiddens)]
-            # self.weights_output.append(neuron_weights)
-
+    def initialize_weights(self, layers, threshold=1):
+        self.num_layers = len(layers)
+        self.layer_sizes = layers
+        self.biases = [np.random.uniform(-threshold, threshold, size=(y, 1)) for y in layers[1:]]
+        self.weights = [np.random.uniform(-threshold, threshold, size=(y, x)) for (x, y) in zip(layers[:-1], layers[1:])]
 
     def predict(self, input_sample):
-        pass
+        output = input_sample
+
+        for w, b in zip(self.weights[:-1], self.biases[:-1]):
+            output = self.activation_f(np.dot(w, output) + b)
+
+        # Allow different output activation function (e.g. for softmax)
+        output = self.output_activation_f(np.dot(self.weights[-1], output) + self.biases[-1])
+
+        return output
